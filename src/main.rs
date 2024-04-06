@@ -55,21 +55,25 @@ fn main() -> anyhow::Result<()> {
         let line = line?;
         let (city, temp) = line.split_once(';').unwrap();
         let temp: f32 = temp.parse().unwrap();
-        let city = city.to_string();
-        cities
-            .entry(city)
-            .and_modify(|d| {
+        match cities.get_mut(city) {
+            Some(d) => {
                 d.count += 1;
                 d.min = f32::min(d.min, temp);
                 d.max = f32::max(d.max, temp);
                 d.sum += temp;
-            })
-            .or_insert_with(|| CityData {
-                count: 1,
-                min: temp,
-                max: temp,
-                sum: temp,
-            });
+            }
+            None => {
+                cities.insert(
+                    city.to_string(),
+                    CityData {
+                        count: 1,
+                        min: temp,
+                        max: temp,
+                        sum: temp,
+                    },
+                );
+            }
+        }
     }
 
     print!("{{");
