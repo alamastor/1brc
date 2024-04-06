@@ -47,3 +47,13 @@ out/
 /*.out
 out_expected.txt
 /*-timing.json
+
+
+# Added by cargo
+
+/target
+
+# Perf
+flamegraph.svg
+perf.data
+perf.data.old
