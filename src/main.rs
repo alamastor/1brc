@@ -1,9 +1,13 @@
+#![feature(let_chains)]
 use std::{
     collections::HashMap,
     fmt::Display,
     fs::File,
     io::{BufRead, BufReader},
+    path::PathBuf,
 };
+
+use clap::Parser;
 
 #[derive(Debug)]
 struct CityData {
@@ -25,11 +29,29 @@ impl Display for CityData {
     }
 }
 
+#[derive(Parser)]
+struct Cli {
+    #[arg(short, long, help = "Number of rows to process")]
+    limit: Option<usize>,
+    #[arg(
+        short,
+        long,
+        help = "Path to measurements file",
+        default_value = "measurements.txt"
+    )]
+    measurements_file: PathBuf,
+}
+
 fn main() -> anyhow::Result<()> {
-    let file = File::open("measurements.txt")?;
+    let cli = Cli::parse();
+
+    let file = File::open(cli.measurements_file)?;
     let buf_reader = BufReader::new(file);
     let mut cities: HashMap<String, CityData> = HashMap::new();
     for (i, line) in buf_reader.lines().enumerate() {
+        if let Some(limit) = cli.limit && limit == i {
+            break;
+        }
         let line = line?;
         let (city, temp) = line.split_once(';').unwrap();
         let temp: f32 = temp.parse().unwrap();
@@ -48,9 +70,6 @@ fn main() -> anyhow::Result<()> {
                 max: temp,
                 sum: temp,
             });
-        if i == 1_000_000_000 {
-            break;
-        }
     }
 
     print!("{{");
