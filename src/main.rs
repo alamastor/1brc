@@ -46,15 +46,18 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     let file = File::open(cli.measurements_file)?;
-    let buf_reader = BufReader::new(file);
+    let mut buf_reader = BufReader::new(file);
     let mut cities: HashMap<String, CityData> = HashMap::new();
-    for (i, line) in buf_reader.lines().enumerate() {
-        if let Some(limit) = cli.limit && limit == i {
+    let mut buf = String::with_capacity(1024);
+    let mut i = 0;
+    loop {
+        buf.clear();
+        buf_reader.read_line(&mut buf)?;
+        if buf.is_empty() {
             break;
         }
-        let line = line?;
-        let (city, temp) = line.split_once(';').unwrap();
-        let temp: f32 = temp.parse().unwrap();
+        let (city, temp) = buf.split_once(';').unwrap();
+        let temp: f32 = temp[..temp.len() - 1].parse().unwrap();
         match cities.get_mut(city) {
             Some(d) => {
                 d.count += 1;
@@ -73,6 +76,10 @@ fn main() -> anyhow::Result<()> {
                     },
                 );
             }
+        }
+        i += 1;
+        if let Some(limit) = cli.limit && limit == i {
+            break;
         }
     }
 
