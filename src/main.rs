@@ -1,13 +1,10 @@
 #![feature(let_chains)]
-use std::{
-    collections::HashMap,
-    fmt::Display,
-    fs::File,
-    io::{BufRead, BufReader},
-    path::PathBuf,
-};
+use std::collections::BTreeMap;
+use std::io::Read;
+use std::{fmt::Display, fs::File, path::PathBuf};
 
 use clap::Parser;
+use rayon::prelude::*;
 
 #[derive(Debug)]
 struct CityData {
@@ -44,53 +41,58 @@ struct Cli {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let mut file = File::open(cli.measurements_file)?;
+    let file_len = file.metadata()?.len();
+    let mut buf = String::with_capacity(file_len as usize);
+    file.read_to_string(&mut buf)?;
+    dbg!(file_len, buf.len());
 
-    let file = File::open(cli.measurements_file)?;
-    let mut buf_reader = BufReader::new(file);
-    let mut cities: HashMap<String, CityData> = HashMap::new();
-    let mut buf = String::with_capacity(1024);
-    let mut i = 0;
-    loop {
-        buf.clear();
-        buf_reader.read_line(&mut buf)?;
-        if buf.is_empty() {
-            break;
-        }
-        let (city, temp) = buf.split_once(';').unwrap();
-        let temp: f32 = temp[..temp.len() - 1].parse().unwrap();
-        match cities.get_mut(city) {
-            Some(d) => {
-                d.count += 1;
-                d.min = f32::min(d.min, temp);
-                d.max = f32::max(d.max, temp);
-                d.sum += temp;
-            }
-            None => {
-                cities.insert(
-                    city.to_string(),
-                    CityData {
-                        count: 1,
+    let cities = buf
+        .par_lines()
+        .fold(
+            || BTreeMap::new(),
+            |mut map: BTreeMap<&str, CityData>, line| {
+                let (city, temp) = line.split_once(';').unwrap();
+                let temp: f32 = temp.parse().unwrap();
+                map.entry(city)
+                    .and_modify(|city_data| {
+                        city_data.min = city_data.min.min(temp);
+                        city_data.max = city_data.max.max(temp);
+                        city_data.count += 1;
+                        city_data.sum += temp;
+                    })
+                    .or_insert(CityData {
                         min: temp,
                         max: temp,
+                        count: 1,
                         sum: temp,
-                    },
-                );
-            }
-        }
-        i += 1;
-        if let Some(limit) = cli.limit && limit == i {
-            break;
-        }
-    }
+                    });
+                map
+            },
+        )
+        .reduce(
+            || BTreeMap::new(),
+            |mut l, r| {
+                r.into_iter().for_each(|(r_city_name, r_city_data)| {
+                    l.entry(r_city_name)
+                        .and_modify(|l_city_data| {
+                            l_city_data.min = l_city_data.min.min(r_city_data.min);
+                            l_city_data.max = l_city_data.max.max(r_city_data.max);
+                            l_city_data.count += r_city_data.count;
+                            l_city_data.sum += r_city_data.sum;
+                        })
+                        .or_insert(r_city_data);
+                });
+                l
+            },
+        );
 
     print!("{{");
-    let mut sorted_cities = cities.keys().collect::<Vec<_>>();
-    sorted_cities.sort();
     print!(
         "{}",
-        sorted_cities
+        cities
             .into_iter()
-            .map(|city| format!("{city}={}", cities.get(city).unwrap()))
+            .map(|(city_name, city_data)| format!("{city_name}={city_data}"))
             .collect::<Vec<_>>()
             .join(", ")
     );
