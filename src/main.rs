@@ -1,9 +1,10 @@
 #![feature(let_chains)]
+#![feature(slice_split_once)]
 use std::collections::BTreeMap;
-use std::io::Read;
 use std::{fmt::Display, fs::File, path::PathBuf};
 
 use clap::Parser;
+use memmap2::Mmap;
 use rayon::prelude::*;
 
 #[derive(Debug)]
@@ -41,32 +42,34 @@ struct Cli {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let mut file = File::open(cli.measurements_file)?;
+    let file = File::open(cli.measurements_file)?;
     let file_len = file.metadata()?.len();
-    let mut buf = String::with_capacity(file_len as usize);
-    file.read_to_string(&mut buf)?;
+    let buf = unsafe { Mmap::map(&file)? };
+
     dbg!(file_len, buf.len());
 
     let cities = buf
-        .par_lines()
+        .par_split(|i| *i == b'\n')
         .fold(
             || BTreeMap::new(),
             |mut map: BTreeMap<&str, CityData>, line| {
-                let (city, temp) = line.split_once(';').unwrap();
-                let temp: f32 = temp.parse().unwrap();
-                map.entry(city)
-                    .and_modify(|city_data| {
-                        city_data.min = city_data.min.min(temp);
-                        city_data.max = city_data.max.max(temp);
-                        city_data.count += 1;
-                        city_data.sum += temp;
-                    })
-                    .or_insert(CityData {
-                        min: temp,
-                        max: temp,
-                        count: 1,
-                        sum: temp,
-                    });
+                if let Some((city, temp)) = line.split_once(|i| *i == b';') {
+                    let city = unsafe { std::str::from_utf8_unchecked(city) };
+                    let temp: f32 = unsafe { std::str::from_utf8_unchecked(temp).parse().unwrap() };
+                    map.entry(city)
+                        .and_modify(|city_data| {
+                            city_data.min = city_data.min.min(temp);
+                            city_data.max = city_data.max.max(temp);
+                            city_data.count += 1;
+                            city_data.sum += temp;
+                        })
+                        .or_insert(CityData {
+                            min: temp,
+                            max: temp,
+                            count: 1,
+                            sum: temp,
+                        });
+                }
                 map
             },
         )
