@@ -1,6 +1,6 @@
 #![feature(let_chains)]
 #![feature(slice_split_once)]
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::{fmt::Display, fs::File, path::PathBuf};
 
 use clap::Parser;
@@ -51,8 +51,8 @@ fn main() -> anyhow::Result<()> {
     let cities = buf
         .par_split(|i| *i == b'\n')
         .fold(
-            || BTreeMap::new(),
-            |mut map: BTreeMap<&str, CityData>, line| {
+            || HashMap::new(),
+            |mut map: HashMap<&str, CityData>, line| {
                 if let Some((city, temp)) = line.split_once(|i| *i == b';') {
                     let city = unsafe { std::str::from_utf8_unchecked(city) };
                     let temp: f32 = unsafe { std::str::from_utf8_unchecked(temp).parse().unwrap() };
@@ -73,12 +73,28 @@ fn main() -> anyhow::Result<()> {
                 map
             },
         )
+        .fold(
+            || BTreeMap::new(),
+            |mut l, r| {
+                r.into_iter().for_each(|(r_city_name, r_city_data)| {
+                    l.entry(r_city_name)
+                        .and_modify(|l_city_data: &mut CityData| {
+                            l_city_data.min = l_city_data.min.min(r_city_data.min);
+                            l_city_data.max = l_city_data.max.max(r_city_data.max);
+                            l_city_data.count += r_city_data.count;
+                            l_city_data.sum += r_city_data.sum;
+                        })
+                        .or_insert(r_city_data);
+                });
+                l
+            },
+        )
         .reduce(
             || BTreeMap::new(),
             |mut l, r| {
                 r.into_iter().for_each(|(r_city_name, r_city_data)| {
                     l.entry(r_city_name)
-                        .and_modify(|l_city_data| {
+                        .and_modify(|l_city_data: &mut CityData| {
                             l_city_data.min = l_city_data.min.min(r_city_data.min);
                             l_city_data.max = l_city_data.max.max(r_city_data.max);
                             l_city_data.count += r_city_data.count;
