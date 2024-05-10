@@ -10,6 +10,8 @@ use memmap2::Mmap;
 use nohash::BuildNoHashHasher;
 use rayon::prelude::*;
 
+static HASH_TABLE_SIZE: u64 = 1 << 17;
+
 #[derive(Debug)]
 struct City<'a> {
     name: &'a str,
@@ -62,7 +64,12 @@ fn main() -> anyhow::Result<()> {
     let cities = buf
         .par_split(|i| *i == b'\n')
         .fold(
-            || HashMap::with_hasher(BuildNoHashHasher::default()),
+            || {
+                HashMap::with_capacity_and_hasher(
+                    HASH_TABLE_SIZE as usize,
+                    BuildNoHashHasher::default(),
+                )
+            },
             |mut map: HashMap<u64, City, BuildNoHashHasher<u64>>, line| {
                 if let Some((name, temp)) = line.split_once(|i| *i == b';') {
                     let hash = hash_name(name);
