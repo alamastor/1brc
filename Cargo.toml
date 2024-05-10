@@ -9,4 +9,5 @@ edition = "2021"
 anyhow = "1.0.81"
 clap = { version = "4.5.4", features = ["derive"] }
 memmap2 = "0.9.4"
+nohash = "0.2.0"
 rayon = "1.10.0"
