@@ -11,20 +11,30 @@ use clap::Parser;
 use memmap2::Mmap;
 use rayon::prelude::*;
 
+use onebrc;
+
 static HASH_TABLE_SIZE: u64 = 1 << 17;
 
 #[derive(Debug)]
 struct City<'a> {
     name: &'a str,
-    count: usize,
-    min: f32,
-    max: f32,
-    sum: f32,
+    count: u32,
+    min: i16,
+    max: i16,
+    sum: i32,
 }
 
 impl<'a> City<'a> {
     fn mean(&self) -> f32 {
-        ((10.0 * self.sum) / self.count as f32).round() / 10.0
+        (self.sum as f32 / self.count as f32).round() / 10.0
+    }
+
+    fn max(&self) -> f32 {
+        self.max as f32 / 10.0
+    }
+
+    fn min(&self) -> f32 {
+        self.min as f32 / 10.0
     }
 }
 
@@ -34,9 +44,9 @@ impl<'a> Display for City<'a> {
             f,
             "{}={:.1}/{:.1}/{:.1}",
             self.name,
-            self.min,
+            self.min(),
             self.mean(),
-            self.max
+            self.max(),
         )
     }
 }
@@ -73,20 +83,21 @@ fn main() -> anyhow::Result<()> {
             },
             |mut map: HashMap<&[u8], City, BuildNameHasher>, line| {
                 if let Some((name, temp)) = line.split_once(|i| *i == b';') {
-                    let temp: f32 = unsafe { std::str::from_utf8_unchecked(temp).parse().unwrap() };
+                    let temp =
+                        onebrc::parse_number(unsafe { std::mem::transmute(temp.as_ptr()) }) as i16;
                     map.entry(name)
                         .and_modify(|city_data| {
                             city_data.min = city_data.min.min(temp);
                             city_data.max = city_data.max.max(temp);
                             city_data.count += 1;
-                            city_data.sum += temp;
+                            city_data.sum += temp as i32;
                         })
                         .or_insert(City {
                             name: unsafe { std::str::from_utf8_unchecked(name) },
                             min: temp,
                             max: temp,
                             count: 1,
-                            sum: temp,
+                            sum: temp as i32,
                         });
                 }
                 map
