@@ -2,12 +2,13 @@
 #![feature(slice_split_once)]
 #![feature(unchecked_math)]
 #![feature(const_inherent_unchecked_arith)]
+#![feature(hasher_prefixfree_extras)]
 use std::collections::{BTreeMap, HashMap};
+use std::hash::{BuildHasherDefault, Hasher};
 use std::{fmt::Display, fs::File, path::PathBuf};
 
 use clap::Parser;
 use memmap2::Mmap;
-use nohash::BuildNoHashHasher;
 use rayon::prelude::*;
 
 static HASH_TABLE_SIZE: u64 = 1 << 17;
@@ -67,15 +68,13 @@ fn main() -> anyhow::Result<()> {
             || {
                 HashMap::with_capacity_and_hasher(
                     HASH_TABLE_SIZE as usize,
-                    BuildNoHashHasher::default(),
+                    BuildNameHasher::default(),
                 )
             },
-            |mut map: HashMap<u64, City, BuildNoHashHasher<u64>>, line| {
+            |mut map: HashMap<&[u8], City, BuildNameHasher>, line| {
                 if let Some((name, temp)) = line.split_once(|i| *i == b';') {
-                    let hash = hash_name(name);
-                    let name = unsafe { std::str::from_utf8_unchecked(name) };
                     let temp: f32 = unsafe { std::str::from_utf8_unchecked(temp).parse().unwrap() };
-                    map.entry(hash)
+                    map.entry(name)
                         .and_modify(|city_data| {
                             city_data.min = city_data.min.min(temp);
                             city_data.max = city_data.max.max(temp);
@@ -83,7 +82,7 @@ fn main() -> anyhow::Result<()> {
                             city_data.sum += temp;
                         })
                         .or_insert(City {
-                            name,
+                            name: unsafe { std::str::from_utf8_unchecked(name) },
                             min: temp,
                             max: temp,
                             count: 1,
@@ -151,24 +150,59 @@ const MASKS: [u64; 8] = {
     result
 };
 
-fn hash_name(name: &[u8]) -> u64 {
-    let name_p1 = u64::from_le_bytes(unsafe { *(name.as_ptr() as *const [u8; 8]) });
-    let name_p2 = u64::from_le_bytes(unsafe { *((name.as_ptr() as usize + 8) as *const [u8; 8]) });
-    if name.len() < 17 {
-        let mask_1 = MASKS[(name.len() - 1).min(7)];
-        let masked_p1 = name_p1 & mask_1;
-        let mask_2 = MASKS[(name.len()).max(9) - 9] & if name.len() > 8 { u64::MAX } else { 0 };
-        let masked_p2 = name_p2 & mask_2;
-        masked_p1 ^ masked_p2
-    } else {
-        let mut hash = name_p1 ^ name_p2;
-        for i in (16..name.len()).step_by(8) {
-            let name_chunk =
-                u64::from_le_bytes(unsafe { *((name.as_ptr() as usize + i) as *const [u8; 8]) });
-            hash ^= name_chunk & MASKS[(name.len() - i - 1).min(7)];
+#[derive(Default)]
+struct NameHasher {
+    hash: Option<u64>,
+}
+
+impl Hasher for NameHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        match self.hash {
+            Some(_) => panic!("Name hasher: second write attempted"),
+            None => {
+                self.hash = Some({
+                    let name_p1 =
+                        u64::from_le_bytes(unsafe { *(bytes.as_ptr() as *const [u8; 8]) });
+                    let name_p2 = u64::from_le_bytes(unsafe {
+                        *((bytes.as_ptr() as usize + 8) as *const [u8; 8])
+                    });
+                    if bytes.len() < 17 {
+                        let mask_1 = MASKS[(bytes.len() - 1).min(7)];
+                        let masked_p1 = name_p1 & mask_1;
+                        let mask_2 = MASKS[(bytes.len()).max(9) - 9]
+                            & if bytes.len() > 8 { u64::MAX } else { 0 };
+                        let masked_p2 = name_p2 & mask_2;
+                        masked_p1 ^ masked_p2
+                    } else {
+                        let mut hash = name_p1 ^ name_p2;
+                        for i in (16..bytes.len()).step_by(8) {
+                            let name_chunk = u64::from_le_bytes(unsafe {
+                                *((bytes.as_ptr() as usize + i) as *const [u8; 8])
+                            });
+                            hash ^= name_chunk & MASKS[(bytes.len() - i - 1).min(7)];
+                        }
+                        hash
+                    }
+                })
+            }
         }
-        hash
     }
+
+    // No-op; prevent multiple calls to `write`
+    fn write_length_prefix(&mut self, _len: usize) {}
+
+    fn finish(&self) -> u64 {
+        self.hash.unwrap()
+    }
+}
+
+type BuildNameHasher = BuildHasherDefault<NameHasher>;
+
+#[cfg(test)]
+fn hash_name(name: &[u8]) -> u64 {
+    let mut hasher = NameHasher::default();
+    hasher.write(name);
+    hasher.finish()
 }
 
 #[test]
